@@ -8,9 +8,13 @@ AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 
 AC_PROG_CXX
 
-PKG_CHECK_MODULES(ARROW, [ arrow, parquet ])
-AC_SUBST([ARROW_CFLAGS])
-AC_SUBST([ARROW_LIBS])
+PKG_CHECK_MODULES(libparquet, [ arrow, parquet ])
+AC_SUBST([libparquet_CFLAGS])
+AC_SUBST([libparquet_LIBS])
+
+PKG_CHECK_MODULES(libpng, [ libpng ])
+AC_SUBST([libpng_CFLAGS])
+AC_SUBST([libpng_LIBS])
 
 AC_OPENMP
 AC_SUBST([OPENMP_CFLAGS])

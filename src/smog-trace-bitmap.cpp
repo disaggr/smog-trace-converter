@@ -7,24 +7,14 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 
-#include <omp.h>
-
-#include <arrow/io/file.h>
-#include <parquet/stream_writer.h>
-
 #include <iostream>
 #include <cerrno>
 #include <cassert>
+#include <cstring>
+#include <cstdint>
+#include <vector>
 
-
-using parquet::WriterProperties;
-using parquet::ParquetVersion;
-using parquet::ParquetDataPageVersion;
-using arrow::Compression;
-
-
-static void write_frame(char *outfile, std::shared_ptr<parquet::schema::GroupNode> schema, char *buffer);
-
+#include <png.h>
 
 class range {
  public:
@@ -80,22 +70,17 @@ class range {
 };
 
 
+static void write_frame(unsigned char *pixels, std::vector<range> ranges, size_t width, char *buffer);
+
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
-        std::cerr << "usage: " << argv[0] << " <TRACEFILE> <OUTFILE-PATTERN>" << std::endl;
+        std::cerr << "usage: " << argv[0] << " <TRACEFILE> <BITMAP>" << std::endl;
         return 2;
     }
 
     char *tracefile = argv[1];
     char *outfile = argv[2];
-
-    // check the outfile pattern
-    if (!strstr(outfile, "%s")) {
-        std::cerr << "usage: " << argv[0] << " <TRACEFILE> <OUTFILE-PATTERN>" << std::endl;
-        std::cerr << "  note: OUTFILE-PATTERN must contain '%s'" << std::endl;
-        return 2;
-    }
 
     // open and map the tracefile for random access
     int fd = open(tracefile, O_RDONLY);
@@ -206,104 +191,119 @@ int main(int argc, char *argv[]) {
                   << active_ranges[i].upper - active_ranges[i].lower + 1 << " Pages" << std::endl;
     }
 
-    std::cout << "Unpacking " << num_frames << " parquet files... 0%" << std::flush;
+    size_t total_vmem = 0;
+    for (size_t i = 0; i < active_ranges.size(); ++i) {
+        total_vmem += active_ranges[i].upper - active_ranges[i].lower + 1;
+    }
 
-    // create a parquet schema
-    parquet::schema::NodeVector fields;
+    // prepare output file
+    size_t yres = num_frames;
+    size_t xres = total_vmem;
 
-    fields.push_back(parquet::schema::PrimitiveNode::Make(
-        "pageno", parquet::Repetition::REQUIRED, parquet::Type::INT64,
-        parquet::ConvertedType::UINT_64));
-    fields.push_back(parquet::schema::PrimitiveNode::Make(
-        "is_present", parquet::Repetition::REQUIRED, parquet::Type::BOOLEAN,
-        parquet::ConvertedType::NONE));
-    fields.push_back(parquet::schema::PrimitiveNode::Make(
-        "is_dirty", parquet::Repetition::REQUIRED, parquet::Type::BOOLEAN,
-        parquet::ConvertedType::NONE));
+    png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    if (!png) {
+        std::cerr << outfile << ": png_create_write_struct: " << strerror(errno) << std::endl;
+        return 1;
+    }
 
-    auto schema = std::static_pointer_cast<parquet::schema::GroupNode>(
-        parquet::schema::GroupNode::Make("schema", parquet::Repetition::REQUIRED, fields));
+    png_set_user_limits(png, 0x7fffffff, 0x7fffffff);
+
+    png_infop png_info = png_create_info_struct(png);
+    if (!png_info) {
+        std::cerr << outfile << ": png_create_info_struct: " << strerror(errno) << std::endl;
+        return 1;
+    }
+
+    FILE *png_fp = fopen(outfile, "wb");
+    if (png_fp == NULL) {
+        std::cerr << outfile << ": " << strerror(errno) << std::endl;
+        return 1;
+    }
+    png_init_io(png, png_fp);//9
+    png_set_IHDR(png,
+                 png_info,
+                 xres,
+                 yres,
+                 8 /* depth */,
+                 PNG_COLOR_TYPE_RGB,
+                 PNG_INTERLACE_NONE,
+                 PNG_COMPRESSION_TYPE_BASE,
+                 PNG_FILTER_TYPE_BASE);
+
+    png_colorp palette = (png_colorp)png_malloc(png, PNG_MAX_PALETTE_LENGTH * sizeof(png_color));
+    if (!palette) {
+        std::cerr << outfile << ": png_malloc: " << strerror(errno) << std::endl;
+        return 1;
+    }
+
+    png_set_PLTE(png, png_info, palette, PNG_MAX_PALETTE_LENGTH);
+    png_write_info(png, png_info);
+    png_set_packing(png);
+
+    std::cout << "Unpacking " << xres << "x" << yres << " bitmap... 0%" << std::flush;
+
+    unsigned char *pixels = (unsigned char*)malloc(xres * yres * 3 * sizeof(*pixels));
+    if (!pixels) {
+        std::cerr << outfile << ": " << strerror(errno) << std::endl;
+        return 1;
+    }
 
     size_t total_work = num_frames;
     size_t work_done = 0;
 
-    #pragma omp parallel for
     for (size_t i = 0; i < num_frames; ++i) {
-        write_frame(outfile, schema, buffer + frame_offsets[i]);
+        write_frame(pixels + i * xres * 3, active_ranges, xres, buffer + frame_offsets[i]);
 
-        // progress reporting on the last thread
-        if (omp_get_thread_num() == omp_get_num_threads() - 1) {
-            work_done++;
-            std::cout << "\rUnpacking " << num_frames << " parquet files... "
-                      << work_done * omp_get_num_threads() * 100 / total_work
-                      << "%"
-                      << std::flush;
-        }
+        work_done++;
+        std::cout << "\rUnpacking " << xres << "x" << yres << " bitmap... "
+                  << work_done * 100 / total_work
+                  << "%"
+                  << std::flush;
     }
 
-    std::cout << "\rUnpacking " << num_frames << " parquet files... Done." << std::endl;
+    std::cout << "\rUnpacking " << xres << "x" << yres << " bitmap... Done." << std::endl;
+
+    png_bytepp rows = (png_bytepp)png_malloc(png, yres * sizeof(png_bytep));
+    for (size_t i = 0; i < yres; ++i)
+        rows[i] = (png_bytep)(pixels + (yres - i) * xres * 3);
+
+    png_write_image(png, rows);
+    png_write_end(png, png_info);
 
     // cleanup
+    png_free(png, palette);
+    png_destroy_write_struct(&png, &png_info);
     munmap(buffer, st.st_size);
     close(fd);
+    fclose(png_fp);
 
     return 0;
 }
 
-static void write_frame(char *outfile, std::shared_ptr<parquet::schema::GroupNode> schema, char *buffer) {
-    // extract the timeval from the frame
-    time_t sec = *(uint32_t*)buffer;
-    uint32_t usec = *(uint32_t*)(buffer + 4);
-
-    struct tm tm;
-    localtime_r(&sec, &tm);
-
-    // produce a string representation of the time
-    char timestr[27];
-    size_t len = strftime(timestr, 20, "%F_%T", &tm);
-    if (len == 0 || len >= 20) {
-        std::cerr << "failed to create output filename" << std::endl;
-        return;
-    }
-    snprintf(timestr + len, 8, ".%06u", usec);
-
-    // produce a path to the output file
-    int n = snprintf(NULL, 0, outfile, timestr);
-    char *outfile_buf = (char*)malloc(n);
-    if (outfile_buf == NULL) {
-        std::cerr << "failed to allocate memory" << std::endl;
-        return;
-    }
-    snprintf(outfile_buf, n + 1, outfile, timestr);
-
-    // open the output stream
-    std::shared_ptr<arrow::io::FileOutputStream> outstream;
-
-    PARQUET_ASSIGN_OR_THROW(
-        outstream,
-        arrow::io::FileOutputStream::Open(outfile_buf));
-
-    parquet::WriterProperties::Builder builder;
-    builder
-       .max_row_group_length(64 * 1024)
-       ->created_by("smog-meter")
-       ->version(ParquetVersion::PARQUET_2_6)
-       ->data_page_version(ParquetDataPageVersion::V2)
-       ->compression(Compression::SNAPPY);
-
-    // create the stream writer
-    parquet::StreamWriter out {
-        parquet::ParquetFileWriter::Open(outstream, schema, builder.build())
-    };
-
+static void write_frame(unsigned char *pixels, std::vector<range> ranges, size_t width, char *buffer) {
     // extract the number of VMAs from the frame
     uint32_t num_vmas = *(uint32_t*)(buffer + 8);
+
+    size_t reserved = 0;
+    size_t committed = 0;
+    size_t softdirty = 0;
 
     size_t index = 12;
     for (size_t i = 0; i < num_vmas; ++i) {
         uint64_t start = *(uint64_t*)(buffer + index);
         uint64_t end = *(uint64_t*)(buffer + index + 8);
         index += 16;
+
+        size_t pixel_offset = 0;
+        for (size_t j = 0; j < ranges.size(); ++j) {
+            if (start > ranges[j].upper) {
+                pixel_offset += ranges[j].upper - ranges[j].lower + 1;
+            } else if (start > ranges[j].lower) {
+                pixel_offset += start - ranges[j].lower;
+            } else {
+                break;
+            }
+        }
 
         uint32_t pages = *(uint32_t*)(buffer + index);
         index += 4;
@@ -314,17 +314,40 @@ static void write_frame(char *outfile, std::shared_ptr<parquet::schema::GroupNod
 
         size_t words = (pages * 2 + (32 - 1)) / 32;
 
-        for (size_t j = 0; j < pages; ++j) {
-            bool is_present = (buffer[j / 16] >> ((j % 16) * 2)) & 0x1;
-            bool is_dirty   = (buffer[j / 16] >> ((j % 16) * 2 + 1)) & 0x1;
-            uint64_t pageno = start + j;
+        reserved += pages;
 
-            out << pageno << is_present << is_dirty << parquet::EndRow;
+        uint32_t *page_buffer = (uint32_t*)(buffer + index);
+
+        for (size_t j = 0; j < pages; ++j) {
+            bool is_present = (page_buffer[j / 16] >> ((j % 16) * 2)) & 0x1;
+            bool is_dirty   = (page_buffer[j / 16] >> ((j % 16) * 2 + 1)) & 0x1;
+
+            if (is_present) {
+                committed++;
+            }
+            if (is_dirty) {
+                softdirty++;
+            }
+
+            size_t pixel = pixel_offset + j;
+            //std::cout << pixel_offset << ", " << pixel << std::endl;
+            if (pixel >= width) {
+                std::cerr << "warning: pixel position out of range" << std::endl;
+                continue;
+            }
+
+            // not reserved: black
+            // reserved and not present: blue
+            // present and not dirty: green
+            // present and dirty: red
+
+            pixels[pixel * 3] = is_dirty ? 255 : 0;
+            pixels[pixel * 3 + 1] = is_present && !is_dirty ? 255 : 0;
+            pixels[pixel * 3 + 2] = !is_present ? 255 : 0;
         }
 
         index += words * 4;
     }
 
-    // cleanup
-    free(outfile_buf);
+    //std::cout << "R: " << reserved << ", C: " << committed << ", D: " << softdirty << std::endl;
 }
