@@ -265,7 +265,7 @@ int main(int argc, char *argv[]) {
 
     png_bytepp rows = (png_bytepp)png_malloc(png, yres * sizeof(png_bytep));
     for (size_t i = 0; i < yres; ++i)
-        rows[i] = (png_bytep)(pixels + (yres - i) * xres * 3);
+        rows[i] = (png_bytep)(pixels + (yres - 1 - i) * xres * 3);
 
     png_write_image(png, rows);
     png_write_end(png, png_info);
@@ -286,6 +286,7 @@ static void write_frame(unsigned char *pixels, std::vector<range> ranges, size_t
 
     size_t reserved = 0;
     size_t committed = 0;
+    size_t accessed = 0;
     size_t softdirty = 0;
 
     size_t index = 12;
@@ -319,13 +320,15 @@ static void write_frame(unsigned char *pixels, std::vector<range> ranges, size_t
         uint32_t *page_buffer = (uint32_t*)(buffer + index);
 
         for (size_t j = 0; j < pages; ++j) {
-            bool is_present = (page_buffer[j / 16] >> ((j % 16) * 2)) & 0x1;
-            bool is_dirty   = (page_buffer[j / 16] >> ((j % 16) * 2 + 1)) & 0x1;
+            int value = (page_buffer[j / 16] >> ((j % 16) * 2)) & 0x3;
 
-            if (is_present) {
+            if (value >= 0x1) {
                 committed++;
             }
-            if (is_dirty) {
+            if (value >= 0x2) {
+                accessed++;
+            }
+            if (value >= 0x3) {
                 softdirty++;
             }
 
@@ -336,14 +339,15 @@ static void write_frame(unsigned char *pixels, std::vector<range> ranges, size_t
                 continue;
             }
 
-            // not reserved: black
-            // reserved and not present: blue
-            // present and not dirty: green
-            // present and dirty: red
+            // not reserved: black            (0, 0, 0)
+            // reserved and not present: blue (0, 0, 1)
+            // present and not accessed: cyan (0, 1, 1)
+            // accessed and not dirty: green  (0, 1, 0)
+            // dirty: red                     (1, 0, 0)
 
-            pixels[pixel * 3] = is_dirty ? 255 : 0;
-            pixels[pixel * 3 + 1] = is_present && !is_dirty ? 255 : 0;
-            pixels[pixel * 3 + 2] = !is_present ? 255 : 0;
+            pixels[pixel * 3] = (value >= 0x3) ? 255 : 0;
+            pixels[pixel * 3 + 1] = (value >= 0x1 && value <= 0x2) ? 255 : 0;
+            pixels[pixel * 3 + 2] = (value >= 0x0 && value <= 0x1) ? 255 : 0;
         }
 
         index += words * 4;
