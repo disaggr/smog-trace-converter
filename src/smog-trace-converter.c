@@ -22,6 +22,8 @@ static const char *output_format_to_string(enum output_format format) {
             return "parquet";
         case OUTPUT_PNG:
             return "png";
+        case OUTPUT_PNG_FRAMES:
+            return "png-frames";
         default:
             return "unknown";
     }

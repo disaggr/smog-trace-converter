@@ -16,10 +16,11 @@ static struct argp_option options[] = {
     { "output-format", 'o', "FORMAT", 0,
       "the output format to produce. smog-trace-converter tries to guess the output "
       "format you want from the file extension of the output file, but this flag can "
-      "override this guess with an explicit choice.\nOptions are: parquet, png", 0 },
-    { "page-size", 'S', "SIZE", 0, 
+      "override this guess with an explicit choice.\nOptions are: parquet, png and"
+      "png-frames.", 0 },
+    { "page-size", 'S', "SIZE", 0,
       "override the default system page size for size reporting", 0 },
-    { "verbose", 'v', 0, 0, 
+    { "verbose", 'v', 0, 0,
       "show additional output, pass multiple times for even more output", 1 },
     { 0 }
 };
@@ -33,6 +34,8 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
                 arguments->output_format = OUTPUT_PARQUET;
             } else if (!strcmp(arg, "png")) {
                 arguments->output_format = OUTPUT_PNG;
+            } else if (!strcmp(arg, "png-frames")) {
+                arguments->output_format = OUTPUT_PNG_FRAMES;
             } else {
                 argp_error(state, "unsupported output format: %s", arg);
             }
@@ -59,8 +62,12 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
                         char *ext = strrchr(arg, '.');
                         if (ext != NULL && !strcmp(ext, ".parquet")) {
                             arguments->output_format = OUTPUT_PARQUET;
-                        }else if (ext != NULL && !strcmp(ext, ".png")) {
-                            arguments->output_format = OUTPUT_PNG;
+                        } else if (ext != NULL && !strcmp(ext, ".png")) {
+                            if (strstr(arg, "%s")) {
+                                arguments->output_format = OUTPUT_PNG_FRAMES;
+                            } else {
+                                arguments->output_format = OUTPUT_PNG;
+                            }
                         }
                     }
                     break;

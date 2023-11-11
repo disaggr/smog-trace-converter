@@ -2,7 +2,7 @@
  * Copyright (c) 2022 - 2023 OSM Group @ HPI, University of Potsdam
  */
 
-#include "./png.h"
+#include "backends/png.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -35,7 +35,7 @@ static void write_frame(unsigned char *pixels, struct range *ranges, size_t num_
                         size_t width, char *buffer);
 
 int backend_png(struct smog_tracefile *tracefile, const char *path) {
-    // aggregate address ranges 
+    // aggregate address ranges
     printf("Aggregating VMA Ranges:   ");
     fflush(stdout);
     struct range *ranges = NULL;
@@ -167,7 +167,7 @@ int backend_png(struct smog_tracefile *tracefile, const char *path) {
             size_t words = (pages * 2 + (32 - 1)) / 32;
             index += words * 4;
         }
-    } 
+    }
 
     size_t total_vmem = 0;
     for (size_t i = 0; i < num_ranges; ++i) {
@@ -245,7 +245,7 @@ int backend_png(struct smog_tracefile *tracefile, const char *path) {
 
     size_t total_work = tracefile->num_frames;
     size_t work_done = 0;
-    
+
     #pragma omp parallel for
     for (size_t i = 0; i < tracefile->num_frames; ++i) {
         write_frame(pixels + i * xres * 3, ranges, num_ranges, xres,

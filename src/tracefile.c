@@ -61,7 +61,7 @@ void tracefile_close(struct smog_tracefile *tracefile) {
 int tracefile_index_frames(struct smog_tracefile *tracefile) {
     off_t *offsets = NULL;
     size_t n = 0;
-    
+
     size_t index = 0;
     while (index < tracefile->length) {
         // add the current index to the offsets array

@@ -2,13 +2,14 @@
  * Copyright (c) 2022 - 2023 OSM Group @ HPI, University of Potsdam
  */
 
-#include "./parquet.h"
+#include "backends/parquet.h"
 
 #include <omp.h>
 
 #include <arrow/io/file.h>
 #include <parquet/stream_writer.h>
 
+#include <memory>
 #include <iostream>
 
 using parquet::WriterProperties;
