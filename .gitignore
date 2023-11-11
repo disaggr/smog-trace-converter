@@ -18,3 +18,9 @@ configure~
 *.trace
 *.parquet
 *.log
+*.png
+*.dzi
+*_files
+
+# yes, this is what you think it is.
+swapfile
