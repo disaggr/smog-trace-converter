@@ -59,6 +59,8 @@ int backend_png(struct smog_tracefile *tracefile, const char *path) {
             uint64_t vma_end = *(uint64_t*)(tracefile->buffer + index + 8);
             index += 16;
 
+            size_t pages = vma_end - vma_start;
+
             // insert VMA into active ranges
             struct range vma = { vma_start, vma_end - 1 };
             if (arguments.verbose > 3) {
@@ -159,9 +161,12 @@ int backend_png(struct smog_tracefile *tracefile, const char *path) {
                 }
             }
 
-            // get number of pages
-            uint32_t pages = *(uint32_t*)(tracefile->buffer + index);
+            // get name length 
+            uint32_t length = *(uint32_t*)(tracefile->buffer + index);
             index += 4;
+
+            // advance over the name
+            index += length;
 
             // advance the index over the pages
             size_t words = (pages * 2 + (32 - 1)) / 32;
@@ -301,6 +306,8 @@ static void write_frame(unsigned char *pixels, struct range *ranges, size_t num_
         uint64_t end = *(uint64_t*)(buffer + index + 8);
         index += 16;
 
+        size_t pages = end - start;
+
         size_t pixel_offset = 0;
         for (size_t j = 0; j < num_ranges; ++j) {
             if (start > ranges[j].upper) {
@@ -312,12 +319,10 @@ static void write_frame(unsigned char *pixels, struct range *ranges, size_t num_
             }
         }
 
-        uint32_t pages = *(uint32_t*)(buffer + index);
+        // skip over the name
+        uint32_t length = *(uint32_t*)(buffer + index);
         index += 4;
-
-        if (end != start + pages) {
-            fprintf(stderr, "warning: mismatched VMA range\n");
-        }
+        index += length;
 
         size_t words = (pages * 2 + (32 - 1)) / 32;
 

@@ -16,9 +16,6 @@
 #include "./util.h"
 #include "./smog-trace-converter.h"
 
-// TODO: Squarified Treemaps
-// https://www.win.tue.nl/~vanwijk/stm.pdf
-
 struct range {
     size_t lower;
     size_t upper;
@@ -68,6 +65,8 @@ int backend_png_frames(struct smog_tracefile *tracefile, const char *path) {
             uint64_t vma_start = *(uint64_t*)(tracefile->buffer + index);
             uint64_t vma_end = *(uint64_t*)(tracefile->buffer + index + 8);
             index += 16;
+
+            size_t pages = vma_end - vma_start;
 
             // insert VMA into active ranges
             struct range vma = { vma_start, vma_end - 1 };
@@ -169,9 +168,9 @@ int backend_png_frames(struct smog_tracefile *tracefile, const char *path) {
                 }
             }
 
-            // get number of pages
-            uint32_t pages = *(uint32_t*)(tracefile->buffer + index);
-            index += 4;
+            // skip over the name
+            uint32_t length = *(uint32_t*)(tracefile->buffer + index);
+            index += 4 + length;
 
             // advance the index over the pages
             size_t words = (pages * 2 + (32 - 1)) / 32;
@@ -223,6 +222,18 @@ int backend_png_frames(struct smog_tracefile *tracefile, const char *path) {
     return 0;
 }
 
+struct vma {
+    off_t index;
+    uint64_t lower;
+    uint64_t upper;
+    size_t num_pages;
+};
+
+static int vma_cmp(const void *vma1, const void *vma2) {
+    // sort descending
+    return ((struct vma*)vma2)->num_pages - ((struct vma*)vma1)->num_pages;
+}
+
 static void write_frame(const char *outfile, struct range *ranges, size_t num_ranges,
                         size_t total_vmem, char *buffer) {
     // extract the timeval from the frame
@@ -253,6 +264,63 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
     // produce the dimensions of the image
     size_t yres = sqrt(3 * total_vmem) / 2;
     size_t xres = (total_vmem + (yres - 1)) / yres;
+
+    // create a squarified treemap of the VMAs
+    // see https://www.win.tue.nl/~vanwijk/stm.pdf
+
+    // procedure squarify(list of real :: children, list of real :: row, real :: w)
+    // begin
+    //     real c = head(children);
+    //     if worst(row, w) <= worst(row ++ [c], w) then
+    //         squarify(tail(children), row ++ [c], w)
+    //     else
+    //         layoutrow(row);
+    //         squarify(children, [], width());
+    //     fi
+    // end
+    //
+    // worst(R; w) = max{r in R}(max((w^2 * r) / s^2; s^2 / (w^2 * r)))
+    //             = max((w^2 * r_max) / s^2; s^2 / (w^2 * r_min))
+
+    // extract the number of VMAs from the frame
+    uint32_t num_vmas = *(uint32_t*)(buffer + 8);
+
+    // index all vma offsets from the frame
+    struct vma *vmas = calloc(sizeof(*vmas), num_vmas);
+    if (!vmas) {
+        perror("calloc");
+        return;
+    }
+    
+    size_t index = 12;
+    for (size_t i = 0; i < num_vmas; ++i) {
+        vmas[i].index = index;
+
+        // get vma start and end
+        uint64_t start = *(uint64_t*)(buffer + index);
+        uint64_t end = *(uint64_t*)(buffer + index + 8);
+        index += 16;
+
+        size_t pages = end - start;
+
+        vmas[i].lower = start;
+        vmas[i].upper = end;
+
+        // skip over the name
+        uint32_t length = *(uint32_t*)(buffer + index);
+        index += 4 + length;
+
+        vmas[i].num_pages = pages;
+
+        // skip the words encoding the page bits
+        size_t words = (pages * 2 + (32 - 1)) / 32;
+        index += words * 4;
+    }
+
+    // sort the vma offsets by descending size
+    qsort(vmas, num_vmas, sizeof(*vmas), &vma_cmp);
+
+    // TODO: continue here
 
     // create the png structures
     png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
@@ -307,14 +375,13 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
         return;
     }
 
-    // extract the number of VMAs from the frame
-    uint32_t num_vmas = *(uint32_t*)(buffer + 8);
-
-    size_t index = 12;
+    index = 12;
     for (size_t i = 0; i < num_vmas; ++i) {
         uint64_t start = *(uint64_t*)(buffer + index);
         uint64_t end = *(uint64_t*)(buffer + index + 8);
         index += 16;
+
+        size_t pages = end - start;
 
         size_t pixel_offset = 0;
         for (size_t j = 0; j < num_ranges; ++j) {
@@ -327,8 +394,9 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
             }
         }
 
-        uint32_t pages = *(uint32_t*)(buffer + index);
-        index += 4;
+        // skip over the name
+        uint32_t length = *(uint32_t*)(buffer + index);
+        index += 4 + length;
 
         if (end != start + pages) {
             fprintf(stderr, "warning: mismatched VMA range\n");

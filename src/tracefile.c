@@ -5,6 +5,7 @@
 #include "./tracefile.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -84,12 +85,16 @@ int tracefile_index_frames(struct smog_tracefile *tracefile) {
 
         // advance the index over each VMA
         for (uint32_t i = 0; i < num_vmas; ++i) {
-            // advance the index over VMA start / end
+            // get VMA start / end
+            uint64_t lower = *(uint64_t*)(tracefile->buffer + index);
+            uint64_t upper = *(uint64_t*)(tracefile->buffer + index + 8);
             index += 16;
 
-            // get number of pages
-            uint32_t pages = *(uint32_t*)(tracefile->buffer + index);
-            index += 4;
+            size_t pages = upper - lower;
+
+            // advance the index over the zvma name
+            uint32_t length = *(uint32_t*)(tracefile->buffer + index);
+            index += 4 + length;
 
             // advance the index over the pages
             size_t words = (pages * 2 + (32 - 1)) / 32;

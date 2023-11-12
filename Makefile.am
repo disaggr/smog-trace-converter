@@ -3,7 +3,7 @@ AUTOMAKE_OPTIONS = subdir-objects
 
 bin_PROGRAMS = smog-trace-converter
 
-smog_trace_converter_CPPFLAGS = -Isrc/ -Wall -Wextra
+smog_trace_converter_CPPFLAGS = -Isrc/ -Wall -Wextra -Werror
 smog_trace_converter_CFLAGS = @libparquet_CFLAGS@ @OPENMP_CFLAGS@ @libpng_CFLAGS@
 smog_trace_converter_CXXFLAGS = $(smog_trace_converter_CFLAGS)
 smog_trace_converter_LDADD = @libparquet_LIBS@ @libpng_LIBS@

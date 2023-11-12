@@ -123,12 +123,10 @@ static void write_frame(const char *outfile, std::shared_ptr<parquet::schema::Gr
         uint64_t end = *(uint64_t*)(buffer + index + 8);
         index += 16;
 
-        uint32_t pages = *(uint32_t*)(buffer + index);
-        index += 4;
+        size_t pages = end - start;
 
-        if (end != start + pages) {
-            std::cerr << "warning: mismatched VMA range" << std::endl;
-        }
+        uint32_t length = *(uint32_t*)(buffer + index);
+        index += 4 + length;
 
         size_t words = (pages * 2 + (32 - 1)) / 32;
 
