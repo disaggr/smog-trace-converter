@@ -4,11 +4,13 @@
 
 #include "backends/png-frames.h"
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
-#include <math.h>
+#include <iostream>
+#include <vector>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <cassert>
 
 #include <png.h>
 #include <omp.h>
@@ -16,37 +18,77 @@
 #include "./util.h"
 #include "./smog-trace-converter.h"
 
-struct range {
+class range {
+ public:
     size_t lower;
     size_t upper;
+
+    range(size_t start, size_t end) : lower(start), upper(end) {
+        // std::cout << "start: " << start << ", end: " << end << std::endl;
+        assert(upper >= lower);
+    }
+
+    bool intersects(range const& b) const {
+        return this->lower <= b.upper && b.lower <= this->upper;
+    }
+
+    bool operator==(range const& b) const {
+        return b.lower == lower && b.upper == upper;
+    }
+
+    bool operator!=(range const& b) const {
+        return b.lower != lower || b.upper != upper;
+    }
+
+    bool operator>(range const& b) const {
+        return lower > b.upper;
+    }
+
+    bool operator<(range const& b) const {
+        return upper < b.lower;
+    }
+
+    range operator&(range b) {
+        size_t l = std::max(b.lower, lower);
+        size_t r = std::min(b.upper, upper);
+        if (r < l) {
+            return range(0, 0);
+        } else {
+            return range(l, r);
+        }
+    }
+
+    range operator|(range b) {
+        size_t l = std::min(b.lower, lower);
+        size_t r = std::max(b.upper, upper);
+        return range(l, r);
+    }
+
+    range& operator|=(range b) {
+        *this = *this | b;
+        return *this;
+    }
+
+    friend std::ostream& operator<<(std::ostream &os, const range &r) {
+        os << std::hex << "(0x" << r.lower << ", 0x" << r.upper << ")" << std::dec;
+        return os;
+    }
 };
 
-static int range_intersects(struct range a, struct range b) {
-    return (a.lower <= b.upper && b.lower <= a.upper);
-}
-
-static void range_extend(struct range *a, struct range b) {
-    if (b.lower < a->lower)
-        a->lower = b.lower;
-    if (b.upper > a->upper)
-        a->upper = b.upper;
-}
-
-static void write_frame(const char *outfile, struct range *ranges, size_t num_ranges,
+static void write_frame(const char *outfile, std::vector<range> ranges,
                         size_t total_vmem, char *buffer);
 
 int backend_png_frames(struct smog_tracefile *tracefile, const char *path) {
     // check the outfile pattern
     if (!strstr(path, "%s")) {
-        fprintf(stderr, "error: OUTFILE must contain '%%s'\n");
+        std::cerr << "error: OUTFILE must contain '%s'" << std::endl;
         return 1;
     }
 
     // aggregate address ranges
-    printf("Aggregating VMA Ranges:   ");
-    fflush(stdout);
-    struct range *ranges = NULL;
-    size_t num_ranges = 0;
+    std::cout <<"Aggregating VMA Ranges:   " << std::flush;
+
+    std::vector<range> ranges;
 
     for (size_t i = 0; i < tracefile->num_frames; ++i) {
         off_t index = tracefile->frame_offsets[i];
@@ -71,24 +113,24 @@ int backend_png_frames(struct smog_tracefile *tracefile, const char *path) {
             // insert VMA into active ranges
             struct range vma = { vma_start, vma_end - 1 };
             if (arguments.verbose > 3) {
-                printf("considering range (%#zx, %#zx)\n", vma.lower, vma.upper);
+                std::cout << "considering range " << vma << std::endl;
             }
 
             int matched = 0;
-            for (size_t j = 0; j < num_ranges; ++j) {
+            for (size_t j = 0; j < ranges.size(); ++j) {
                 if (vma.lower > ranges[j].upper) {
                     // keep going
                     continue;
                 }
 
-                if (range_intersects(ranges[j], vma)) {
+                if (ranges[j].intersects(vma)) {
                     // overlapping, extend match
                     if (arguments.verbose > 3) {
-                        printf("  extending (%#zx, %#zx) ", ranges[j].lower, ranges[j].upper);
+                        std::cout << "  extending " << ranges[j];
                     }
-                    range_extend(ranges + j, vma);
+                    ranges[j] |= vma;
                     if (arguments.verbose > 3) {
-                        printf("-> (%#zx, %#zx)\n", ranges[j].lower, ranges[j].upper);
+                        std::cout << "-> " << ranges[j] << std::endl;
                     }
                     matched++;
                     continue;
@@ -98,21 +140,9 @@ int backend_png_frames(struct smog_tracefile *tracefile, const char *path) {
                     // beyond. insert if not matched yet
                     if (!matched) {
                         if (arguments.verbose > 3) {
-                            printf("  inserting at %zu\n", j);
+                            std::cout << "  inserting at " << j << std::endl;
                         }
-                        struct range *new_ranges = realloc(ranges,
-                                                            sizeof(*ranges) * (num_ranges + 1));
-                        if (!new_ranges) {
-                            perror("realloc");
-                            free(ranges);
-                            return 1;
-                        }
-                        ranges = new_ranges;
-                        num_ranges++;
-                        memmove(ranges + j + 1, ranges + j,
-                                (num_ranges - j - 1) * sizeof(*ranges));
-
-                        ranges[j] = vma;
+                        ranges.insert(ranges.begin() + j, vma);
                         matched++;
                     }
                     break;
@@ -121,49 +151,35 @@ int backend_png_frames(struct smog_tracefile *tracefile, const char *path) {
             if (!matched) {
                 // completely new, append.
                 if (arguments.verbose > 3) {
-                    printf("  appending at %zu\n", num_ranges);
+                    std::cout << "  appending at " << ranges.size() << std::endl;
                 }
-                struct range *new_ranges = realloc(ranges,
-                                                   sizeof(*ranges) * (num_ranges + 1));
-                if (!new_ranges) {
-                    perror("realloc");
-                    free(ranges);
-                    return 1;
-                }
-
-                ranges = new_ranges;
-                num_ranges++;
-
-                ranges[num_ranges - 1] = vma;
+                ranges.push_back(vma);
             }
 
             // merge adjancent or overlapping ranges
-            for (size_t j = 1; j < num_ranges; ++j) {
-                if (range_intersects(ranges[j - 1], ranges[j])
+            for (size_t j = 1; j < ranges.size(); ++j) {
+                if (ranges[j - 1].intersects(ranges[j])
                         || ranges[j - 1].upper == ranges[j].lower - 1) {
                     if (arguments.verbose > 3) {
-                        printf("  merging (%#zx, %#zx), (%#zx, %#zx) ",
-                               ranges[j - 1].lower, ranges[j - 1].upper,
-                               ranges[j].lower, ranges[j].upper);
+                        std::cout << "  merging " << ranges[j - 1] << ", " << ranges[j];
                     }
-                    range_extend(ranges + j - 1, ranges[j]);
+                    ranges[j - 1] |= ranges[j];
                     if (arguments.verbose > 3) {
-                        printf("-> (%#zx, %#zx)\n", ranges[j - 1].lower, ranges[j - 1].upper);
+                        std::cout << "-> " << ranges[j - 1] << std::endl;
                     }
-                    memmove(ranges + j, ranges + j + 1, (num_ranges - j - 1) * sizeof(*ranges));
-                    num_ranges--;
+                    ranges.erase(ranges.begin() + j);
                     j--;
                 }
             }
 
             if (arguments.verbose > 3) {
-                printf("%zu ranges\n", num_ranges);
+                std::cout << ranges.size() << " ranges" << std::endl;
                 if (arguments.verbose) {
-                    for (size_t i = 0; i < num_ranges; ++i) {
+                    for (size_t i = 0; i < ranges.size(); ++i) {
                         size_t num_pages = ranges[i].upper - ranges[i].lower + 1;
-                        printf("  (%#zx, %#zx) :: %zu Pages, %s\n",
-                               ranges[i].lower, ranges[i].upper, num_pages,
-                               format_size_string(num_pages * arguments.page_size));
+                        std::cout << "  " << ranges[i] << " :: " << num_pages << " Pages, "
+                                  << format_size_string(num_pages * arguments.page_size)
+                                  << std::endl;
                     }
                 }
             }
@@ -179,45 +195,40 @@ int backend_png_frames(struct smog_tracefile *tracefile, const char *path) {
     }
 
     size_t total_vmem = 0;
-    for (size_t i = 0; i < num_ranges; ++i) {
+    for (size_t i = 0; i < ranges.size(); ++i) {
         total_vmem += ranges[i].upper - ranges[i].lower + 1;
     }
 
-    printf("found %zu ranges with %zu pages, sized %s\n", num_ranges, total_vmem,
-           format_size_string(total_vmem * arguments.page_size));
+    std::cout << "found " << ranges.size() << " ranges with " << total_vmem << " pages, sized "
+              << format_size_string(total_vmem * arguments.page_size) << std::endl;
     if (arguments.verbose) {
-        for (size_t i = 0; i < num_ranges; ++i) {
+        for (size_t i = 0; i < ranges.size(); ++i) {
             size_t num_pages = ranges[i].upper - ranges[i].lower + 1;
-            printf("  (%#zx, %#zx) :: %zu Pages, %s\n",
-                   ranges[i].lower, ranges[i].upper, num_pages,
-                   format_size_string(num_pages * arguments.page_size));
+            std::cout << "  " << ranges[i] << " :: " << num_pages << " Pages, "
+                      << format_size_string(num_pages * arguments.page_size)
+                      << std::endl;
         }
     }
 
-    printf("Writing output frames:    0%%");
-    fflush(stdout);
+    std::cout << "Writing output frames:    0%" << std::flush;
 
     size_t total_work = tracefile->num_frames;
     size_t work_done = 0;
 
     #pragma omp parallel for
     for (size_t i = 0; i < tracefile->num_frames; ++i) {
-        write_frame(path, ranges, num_ranges, total_vmem,
-                    tracefile->buffer + tracefile->frame_offsets[i]);
+        write_frame(path, ranges, total_vmem, tracefile->buffer + tracefile->frame_offsets[i]);
 
         // progress reporting on the last thread
         if (omp_get_thread_num() == omp_get_num_threads() - 1) {
             work_done++;
-            printf("\rWriting output frames:    %zu%%",
-                   work_done * omp_get_num_threads() * 100 / total_work);
-            fflush(stdout);
+            std::cout << "\rWriting output frames:    " 
+                      << work_done * omp_get_num_threads() * 100 / total_work
+                      << "%" << std::flush;
         }
     }
 
-    printf("\rWriting output frames:    100%%\n");
-
-    // cleanup
-    free(ranges);
+    std::cout << "\rWriting output frames:    100%" << std::endl;
 
     return 0;
 }
@@ -234,7 +245,7 @@ static int vma_cmp(const void *vma1, const void *vma2) {
     return ((struct vma*)vma2)->num_pages - ((struct vma*)vma1)->num_pages;
 }
 
-static void write_frame(const char *outfile, struct range *ranges, size_t num_ranges,
+static void write_frame(const char *outfile, std::vector<range> ranges,
                         size_t total_vmem, char *buffer) {
     // extract the timeval from the frame
     time_t sec = *(uint32_t*)buffer;
@@ -247,16 +258,16 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
     char timestr[27];
     size_t len = strftime(timestr, 20, "%F_%T", &tm);
     if (len == 0 || len >= 20) {
-        fprintf(stderr, "failed to create output filename\n");
+        std::cerr << "failed to create output filename" << std::endl;
         return;
     }
     snprintf(timestr + len, 8, ".%06u", usec);
 
     // produce a path to the output file
     int n = snprintf(NULL, 0, outfile, timestr);
-    char *outfile_buf = malloc(n);
+    char *outfile_buf = (char*)malloc(n);
     if (outfile_buf == NULL) {
-        perror("malloc");
+        std::cerr << "malloc: " << strerror(errno) << std::endl;
         return;
     }
     snprintf(outfile_buf, n + 1, outfile, timestr);
@@ -286,9 +297,9 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
     uint32_t num_vmas = *(uint32_t*)(buffer + 8);
 
     // index all vma offsets from the frame
-    struct vma *vmas = calloc(sizeof(*vmas), num_vmas);
+    struct vma *vmas = (struct vma*)calloc(sizeof(*vmas), num_vmas);
     if (!vmas) {
-        perror("calloc");
+        std::cerr << "calloc: " << strerror(errno) << std::endl;
         return;
     }
     
@@ -325,8 +336,7 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
     // create the png structures
     png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if (!png) {
-        fprintf(stderr, "%s: ", outfile_buf);
-        perror("png_write_create_struct");
+        std::cerr << outfile_buf << ": png_write_create_struct: " << strerror(errno) << std::endl;
         return;
     }
 
@@ -334,15 +344,13 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
 
     png_infop png_info = png_create_info_struct(png);
     if (!png_info) {
-        fprintf(stderr, "%s: ", outfile_buf);
-        perror("png_create_info_struct");
+        std::cerr << outfile_buf << ": png_create_info_struct: " << strerror(errno) << std::endl;
         return;
     }
 
     FILE *png_fp = fopen(outfile_buf, "wb");
     if (png_fp == NULL) {
-        fprintf(stderr, "%s: ", outfile_buf);
-        perror("fopen");
+        std::cerr << outfile_buf << ": fopen: " << strerror(errno) << std::endl;
         return;
     }
     png_init_io(png, png_fp);
@@ -356,10 +364,9 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
                  PNG_COMPRESSION_TYPE_BASE,
                  PNG_FILTER_TYPE_BASE);
 
-    png_colorp palette = png_malloc(png, PNG_MAX_PALETTE_LENGTH * sizeof(png_color));
+    png_colorp palette = (png_colorp)png_malloc(png, PNG_MAX_PALETTE_LENGTH * sizeof(png_color));
     if (!palette) {
-        fprintf(stderr, "%s: ", outfile_buf);
-        perror("png_malloc");
+        std::cerr << outfile_buf << ": png_malloc: " << strerror(errno) << std::endl;
         return;
     }
 
@@ -368,10 +375,9 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
     png_set_packing(png);
 
     // prepare memory for the image data
-    unsigned char *pixels = calloc(xres * yres * 3, sizeof(*pixels));
+    unsigned char *pixels = (unsigned char*)calloc(xres * yres * 3, sizeof(*pixels));
     if (!pixels) {
-        fprintf(stderr, "%s: ", outfile_buf);
-        perror("calloc");
+        std::cerr << outfile_buf << ": calloc: " << strerror(errno) << std::endl;
         return;
     }
 
@@ -384,7 +390,7 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
         size_t pages = end - start;
 
         size_t pixel_offset = 0;
-        for (size_t j = 0; j < num_ranges; ++j) {
+        for (size_t j = 0; j < ranges.size(); ++j) {
             if (start > ranges[j].upper) {
                 pixel_offset += ranges[j].upper - ranges[j].lower + 1;
             } else if (start > ranges[j].lower) {
@@ -398,10 +404,6 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
         uint32_t length = *(uint32_t*)(buffer + index);
         index += 4 + length;
 
-        if (end != start + pages) {
-            fprintf(stderr, "warning: mismatched VMA range\n");
-        }
-
         size_t words = (pages * 2 + (32 - 1)) / 32;
 
         uint32_t *page_buffer = (uint32_t*)(buffer + index);
@@ -411,7 +413,7 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
 
             size_t pixel = pixel_offset + j;
             if (pixel >= xres * yres) {
-                fprintf(stderr, "warning: pixel position out of range\n");
+                std::cerr << "warning: pixel position out of range" << std::endl;
                 continue;
             }
 
@@ -429,10 +431,9 @@ static void write_frame(const char *outfile, struct range *ranges, size_t num_ra
         index += words * 4;
     }
 
-    png_bytepp rows = png_malloc(png, yres * sizeof(png_bytep));
+    png_bytepp rows = (png_bytepp)png_malloc(png, yres * sizeof(png_bytep));
     if (!rows) {
-        fprintf(stderr, "%s: ", outfile_buf);
-        perror("calloc");
+        std::cerr << outfile_buf << ": calloc: " << strerror(errno) << std::endl;
         return;
     }
 

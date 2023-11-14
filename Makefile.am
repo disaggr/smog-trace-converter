@@ -14,4 +14,4 @@ smog_trace_converter_SOURCES = src/smog-trace-converter.c src/smog-trace-convert
                                src/tracefile.c src/tracefile.h \
                                src/backends/parquet.cpp src/backends/parquet.h \
                                src/backends/png.c src/backends/png.h \
-                               src/backends/png-frames.c src/backends/png-frames.h
+                               src/backends/png-frames.cpp src/backends/png-frames.h

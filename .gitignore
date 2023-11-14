@@ -19,6 +19,7 @@ configure~
 *.parquet
 *.log
 *.png
+*.gif
 *.dzi
 *_files
 
