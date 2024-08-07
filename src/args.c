@@ -16,8 +16,8 @@ static struct argp_option options[] = {
     { "output-format", 'o', "FORMAT", 0,
       "the output format to produce. smog-trace-converter tries to guess the output "
       "format you want from the file extension of the output file, but this flag can "
-      "override this guess with an explicit choice.\nOptions are: parquet, png and"
-      "png-frames.", 0 },
+      "override this guess with an explicit choice.\nOptions are: parquet, png, "
+      "png-frames and histogram.", 0 },
     { "page-size", 'S', "SIZE", 0,
       "override the default system page size for size reporting", 0 },
     { "verbose", 'v', 0, 0,
@@ -36,6 +36,8 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
                 arguments->output_format = OUTPUT_PNG;
             } else if (!strcmp(arg, "png-frames")) {
                 arguments->output_format = OUTPUT_PNG_FRAMES;
+            } else if (!strcmp(arg, "histogram")) {
+                arguments->output_format = OUTPUT_HISTOGRAM;
             } else {
                 argp_error(state, "unsupported output format: %s", arg);
             }
@@ -57,19 +59,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
                     break;
                 case 1:
                     arguments->output_file = arg;
-                    // try to guess output format from extension
-                    if (arguments->output_format == OUTPUT_UNKNOWN) {
-                        char *ext = strrchr(arg, '.');
-                        if (ext != NULL && !strcmp(ext, ".parquet")) {
-                            arguments->output_format = OUTPUT_PARQUET;
-                        } else if (ext != NULL && !strcmp(ext, ".png")) {
-                            if (strstr(arg, "%s")) {
-                                arguments->output_format = OUTPUT_PNG_FRAMES;
-                            } else {
-                                arguments->output_format = OUTPUT_PNG;
-                            }
-                        }
-                    }
                     break;
                 default:
                     argp_usage(state);
@@ -80,11 +69,28 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
         case ARGP_KEY_END:
             if (state->arg_num < 2)
                 argp_usage(state);
+
+            // try to guess output format from extension
             if (arguments->output_format == OUTPUT_UNKNOWN) {
-                argp_error(state, "unable to guess output format from %s.\n"
-                           "hint: check the file extension on your output file or "
-                           "specify the output format explicitly.",
-                           arguments->output_file);
+                char *ext = strrchr(arguments->output_file, '.');
+                if (ext != NULL && !strcmp(ext, ".parquet")) {
+                    arguments->output_format = OUTPUT_PARQUET;
+                } else if (ext != NULL && !strcmp(ext, ".png")) {
+                    if (strstr(arguments->output_file, "%s")) {
+                        arguments->output_format = OUTPUT_PNG_FRAMES;
+                    } else {
+                        arguments->output_format = OUTPUT_PNG;
+                    }
+                } else if (ext != NULL && !strcmp(ext, ".txt")) {
+                    arguments->output_format = OUTPUT_HISTOGRAM;
+                }
+            }
+
+            if (arguments->output_format == OUTPUT_UNKNOWN) {
+                argp_failure(state, 1, 0, "unable to guess output format from %s.\n"
+                             "hint: check the file extension on your output file or "
+                             "specify the output format explicitly.",
+                             arguments->output_file);
             }
             break;
 

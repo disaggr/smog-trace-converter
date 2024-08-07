@@ -116,6 +116,10 @@ int backend_png_frames(struct smog_tracefile *tracefile, const char *path) {
                 std::cout << "considering range " << vma << std::endl;
             }
 
+            if (vma.lower == 0 && vma.upper == (size_t)-1) {
+                continue;
+            }
+
             int matched = 0;
             for (size_t j = 0; j < ranges.size(); ++j) {
                 if (vma.lower > ranges[j].upper) {
@@ -297,7 +301,7 @@ static void write_frame(const char *outfile, std::vector<range> ranges,
     uint32_t num_vmas = *(uint32_t*)(buffer + 8);
 
     // index all vma offsets from the frame
-    struct vma *vmas = (struct vma*)calloc(sizeof(*vmas), num_vmas);
+    struct vma *vmas = (struct vma*)calloc(num_vmas, sizeof(*vmas));
     if (!vmas) {
         std::cerr << "calloc: " << strerror(errno) << std::endl;
         return;

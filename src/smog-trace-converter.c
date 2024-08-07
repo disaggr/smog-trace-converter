@@ -12,6 +12,7 @@
 #include "./backends/parquet.h"
 #include "./backends/png.h"
 #include "./backends/png-frames.h"
+#include "./backends/histogram.h"
 
 // defaults for cli arguments
 struct arguments arguments = { NULL, NULL, 0, OUTPUT_UNKNOWN, 0 };
@@ -24,6 +25,8 @@ static const char *output_format_to_string(enum output_format format) {
             return "png";
         case OUTPUT_PNG_FRAMES:
             return "png-frames";
+        case OUTPUT_HISTOGRAM:
+            return "histogram";
         default:
             return "unknown";
     }
@@ -72,6 +75,9 @@ int main(int argc, char *argv[]) {
             break;
         case OUTPUT_PNG_FRAMES:
             res = backend_png_frames(&tracefile, arguments.output_file);
+            break;
+        case OUTPUT_HISTOGRAM:
+            res = backend_histogram(&tracefile, arguments.output_file);
             break;
         default:
             fprintf(stderr, "Encountered unsupported output format. This should not happen.\n");

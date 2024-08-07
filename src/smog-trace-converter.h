@@ -12,6 +12,7 @@ enum output_format {
     OUTPUT_PARQUET,
     OUTPUT_PNG,
     OUTPUT_PNG_FRAMES,
+    OUTPUT_HISTOGRAM,
 };
 
 struct arguments {

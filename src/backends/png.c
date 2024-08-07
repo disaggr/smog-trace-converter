@@ -67,6 +67,10 @@ int backend_png(struct smog_tracefile *tracefile, const char *path) {
                 printf("considering range (%#zx, %#zx)\n", vma.lower, vma.upper);
             }
 
+            if (vma.lower == 0 && vma.upper == (size_t)-1) {
+                continue;
+            }
+
             int matched = 0;
             for (size_t j = 0; j < num_ranges; ++j) {
                 if (vma.lower > ranges[j].upper) {
