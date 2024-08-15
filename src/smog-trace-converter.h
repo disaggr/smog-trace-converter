@@ -18,6 +18,7 @@ enum output_format {
 struct arguments {
     const char *tracefile;
     const char *output_file;
+    const char *filter_vma;
     int verbose;
     enum output_format output_format;
     size_t page_size;

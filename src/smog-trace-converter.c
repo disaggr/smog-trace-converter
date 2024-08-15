@@ -15,7 +15,7 @@
 #include "./backends/histogram.h"
 
 // defaults for cli arguments
-struct arguments arguments = { NULL, NULL, 0, OUTPUT_UNKNOWN, 0 };
+struct arguments arguments = { NULL, NULL, NULL, 0, OUTPUT_UNKNOWN, 0 };
 
 static const char *output_format_to_string(enum output_format format) {
     switch (format) {

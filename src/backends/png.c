@@ -61,15 +61,28 @@ int backend_png(struct smog_tracefile *tracefile, const char *path) {
 
             size_t pages = vma_end - vma_start;
 
-            // insert VMA into active ranges
-            struct range vma = { vma_start, vma_end - 1 };
+            // get name length 
+            uint32_t length = *(uint32_t*)(tracefile->buffer + index);
+            index += 4;
+
             if (arguments.verbose > 3) {
-                printf("considering range (%#zx, %#zx)\n", vma.lower, vma.upper);
+                printf("considering range (%#zx, %#zx) :: %.*s\n", vma_start, vma_end, length, (char*)(tracefile->buffer + index));
             }
 
-            if (vma.lower == 0 && vma.upper == (size_t)-1) {
-                continue;
+            // skip VMA if filtered out
+            if (arguments.filter_vma && strncmp(arguments.filter_vma, (char*)(tracefile->buffer + index), length)) {
+                goto end;
             }
+
+            // advance over the name
+            index += length;
+
+            // insert VMA into active ranges
+            struct range vma = { vma_start, vma_end - 1 };
+            if (vma.lower == 0 && vma.upper == (size_t)-1) {
+                goto end;
+            }
+
 
             int matched = 0;
             for (size_t j = 0; j < num_ranges; ++j) {
@@ -165,12 +178,7 @@ int backend_png(struct smog_tracefile *tracefile, const char *path) {
                 }
             }
 
-            // get name length 
-            uint32_t length = *(uint32_t*)(tracefile->buffer + index);
-            index += 4;
-
-            // advance over the name
-            index += length;
+end:
 
             // advance the index over the pages
             size_t words = (pages * 2 + (32 - 1)) / 32;
@@ -192,6 +200,11 @@ int backend_png(struct smog_tracefile *tracefile, const char *path) {
                    ranges[i].lower, ranges[i].upper, num_pages,
                    format_size_string(num_pages * arguments.page_size));
         }
+    }
+
+    if (!num_ranges) {
+        fprintf(stderr, "no ranges to print. exiting now.\n");
+        return 1;
     }
 
     // prepare output file

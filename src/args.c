@@ -20,6 +20,8 @@ static struct argp_option options[] = {
       "png-frames and histogram.", 0 },
     { "page-size", 'S', "SIZE", 0,
       "override the default system page size for size reporting", 0 },
+    { "vma", 'f', "NAME", 0,
+      "limit the output to a single VMA", 0 },
     { "verbose", 'v', 0, 0,
       "show additional output, pass multiple times for even more output", 1 },
     { 0 }
@@ -41,6 +43,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
             } else {
                 argp_error(state, "unsupported output format: %s", arg);
             }
+            break;
+        case 'f':
+            arguments->filter_vma = arg;
             break;
         case 'S':
             errno = 0;
